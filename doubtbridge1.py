@@ -1,16 +1,20 @@
 """
 DoubtBridge - A Multilingual Lecture Doubt Answering System
+With Chroma Vector Database
 """
 
 from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
+import chromadb
 import pdfplumber
 from pptx import Presentation
 import pytesseract
 from PIL import Image
-import numpy as np
 import os
 import re
+
+# Initialize Chroma client (persistent storage)
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+collection = chroma_client.get_or_create_collection(name="lecture_notes")
 
 def extract_pdf_text(pdf_path):
     text = ""
@@ -162,12 +166,32 @@ def split_into_chunks(text, max_words_per_chunk=200):
         final_chunks.append(temp_chunk)
     return [c for c in final_chunks if len(c.split()) >= 5]
 
-def build_embeddings(lecture_notes):
+def build_embeddings_and_store(lecture_notes):
+    """Build embeddings and store in Chroma vector database"""
     model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-    return model, model.encode(lecture_notes)
+    embeddings = model.encode(lecture_notes)
+    
+    # Check if collection is empty, if so add documents
+    if collection.count() == 0:
+        # Generate unique IDs for each chunk
+        ids = [str(i) for i in range(len(lecture_notes))]
+        collection.add(
+            documents=lecture_notes,
+            embeddings=embeddings.tolist(),
+            ids=ids
+        )
+        print(f"Stored {len(lecture_notes)} chunks in Chroma DB")
+    
+    return model
 
-def process_query(model, query):
-    return model.encode([query])
+def query_chroma(model, query, top_k=10):
+    """Query Chroma for similar documents"""
+    query_embedding = model.encode([query]).tolist()
+    results = collection.query(
+        query_embeddings=query_embedding,
+        n_results=top_k
+    )
+    return results
 
 def find_document():
     for f in os.listdir("."):
@@ -185,7 +209,7 @@ def extract_app_name(lecture_notes):
 def extract_technologies(lecture_notes):
     known = []
     tech_names = ['Python', 'Hugging Face', 'Sentence Transformers', 'NumPy',
-                  'Cosine Similarity', 'Tesseract OCR', 'pdfplumber', 'python-pptx']
+                  'Cosine Similarity', 'Tesseract OCR', 'pdfplumber', 'python-pptx', 'Chroma']
     for chunk in lecture_notes:
         chunk_lower = chunk.lower()
         for tech in tech_names:
@@ -196,6 +220,7 @@ def extract_technologies(lecture_notes):
 def main():
     print("=" * 60)
     print("DoubtBridge - Multilingual Lecture Doubt Answering System")
+    print("With Chroma Vector Database")
     print("=" * 60)
     print()
     
@@ -229,8 +254,8 @@ def main():
     print(f"App: {app_name}")
     print(f"Tech: {', '.join(technologies)}")
     
-    print("Building embeddings...")
-    model, note_embeddings = build_embeddings(lecture_notes)
+    print("Building embeddings and storing in Chroma...")
+    model = build_embeddings_and_store(lecture_notes)
     print("Ready!")
     print()
     
@@ -291,9 +316,9 @@ def main():
             print()
             continue
 
-        # Calculate similarity FIRST - this fixes the error!
-        query_embedding = process_query(model, query)
-        similarities = cosine_similarity(query_embedding, note_embeddings)[0]
+        # Query Chroma for similar documents
+        results = query_chroma(model, query, top_k=10)
+        documents = results['documents'][0]
         
         if any(kw in query_lower for kw in capability_keywords):
             print("\nAnswer:")
@@ -311,11 +336,8 @@ def main():
             print()
             continue
         
-        top_indices = np.argsort(similarities)[-10:][::-1]
-        
         clean_answers = []
-        for idx in top_indices:
-            answer = lecture_notes[idx]
+        for answer in documents:
             if is_heading_only(answer):
                 continue
             cleaned = clean_answer_text(answer)
@@ -329,9 +351,9 @@ def main():
             for i, ans in enumerate(clean_answers, 1):
                 print(f"{i}. {ans}")
         else:
-            for i, idx in enumerate(top_indices[:3], 1):
-                print(f"{i}. {lecture_notes[idx]}")
+            print("No suitable answers found.")
         print()
 
 if __name__ == "__main__":
     main()
+
