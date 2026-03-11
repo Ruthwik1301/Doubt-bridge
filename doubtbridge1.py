@@ -180,14 +180,7 @@ def find_document():
     return None
 
 def extract_app_name(lecture_notes):
-    if lecture_notes:
-        first_chunk = lecture_notes[0]
-        for line in first_chunk.split('\n'):
-            line = line.strip()
-            if line:
-                return line
-        return first_chunk[:50]
-    return None
+    return "DoubtBridge"
 
 def extract_technologies(lecture_notes):
     known = []
@@ -230,7 +223,7 @@ def main():
         print("Error: No text extracted!")
         exit(1)
     
-    app_name = extract_app_name(lecture_notes)
+    app_name = "DoubtBridge"
     technologies = extract_technologies(lecture_notes)
     
     print(f"App: {app_name}")
@@ -258,7 +251,7 @@ def main():
         query_lower = query.lower()
         
         if any(kw in query_lower for kw in ['application name', 'app name', 'topic name', 'what is this', 'application ka naam', 'app ka naam', 'naam kya hai']):
-            print(f"\nAnswer: {app_name}\n")
+            print("\nAnswer: DoubtBridge\n")
             continue
         
         if any(kw in query_lower for kw in ['technolog', 'tools used', 'libraries', 'which technologies', 'kis technologies', 'kya tools', 'libraries konsi', 'framework']):
@@ -282,7 +275,6 @@ def main():
                              'type of questions', 'how to use', 'help me', 'question types',
                              'ask anything', 'possible questions', 'examples']
         
-        # Special handler for cosine similarity formula questions
         if 'formula' in query_lower and 'cosine' in query_lower:
             print("\nAnswer:")
             print("The formula for Cosine Similarity is:")
@@ -298,6 +290,10 @@ def main():
             print("Where θ is the angle between the two vectors.")
             print()
             continue
+
+        # Calculate similarity FIRST - this fixes the error!
+        query_embedding = process_query(model, query)
+        similarities = cosine_similarity(query_embedding, note_embeddings)[0]
         
         if any(kw in query_lower for kw in capability_keywords):
             print("\nAnswer:")
@@ -315,8 +311,6 @@ def main():
             print()
             continue
         
-        query_embedding = process_query(model, query)
-        similarities = cosine_similarity(query_embedding, note_embeddings)[0]
         top_indices = np.argsort(similarities)[-10:][::-1]
         
         clean_answers = []
@@ -341,4 +335,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
