@@ -11,6 +11,7 @@ import pytesseract
 from PIL import Image
 import os
 import re
+import hashlib
 
 # Initialize Chroma client (persistent storage)
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
@@ -166,21 +167,52 @@ def split_into_chunks(text, max_words_per_chunk=200):
         final_chunks.append(temp_chunk)
     return [c for c in final_chunks if len(c.split()) >= 5]
 
-def build_embeddings_and_store(lecture_notes):
+def get_document_hash(file_type, file_name):
+    """Get a hash based on file name and modification time"""
+    try:
+        mtime = os.path.getmtime(file_name)
+        hash_input = f"{file_type}_{file_name}_{mtime}"
+        return hashlib.md5(hash_input.encode()).hexdigest()
+    except:
+        return None
+
+def build_embeddings_and_store(lecture_notes, file_type, file_name):
     """Build embeddings and store in Chroma vector database"""
     model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
     embeddings = model.encode(lecture_notes)
     
-    # Check if collection is empty, if so add documents
-    if collection.count() == 0:
+    # Get current document hash
+    current_hash = get_document_hash(file_type, file_name)
+    
+    # Check if we need to rebuild - with proper None handling
+    stored_hash = None
+    try:
+        stored_data = collection.get()
+        if stored_data and stored_data.get('metadatas') and len(stored_data['metadatas']) > 0:
+            stored_hash = stored_data['metadatas'][0].get('doc_hash')
+    except:
+        stored_hash = None
+    
+    # Rebuild if document changed or collection is empty
+    if collection.count() == 0 or stored_hash != current_hash:
+        # Clear existing data by deleting all IDs if hash doesn't match
+        if collection.count() > 0 and stored_hash != current_hash:
+            all_ids = [str(i) for i in range(collection.count())]
+            collection.delete(ids=all_ids)
+        
         # Generate unique IDs for each chunk
         ids = [str(i) for i in range(len(lecture_notes))]
+        metadatas = [{'doc_hash': current_hash} for _ in range(len(lecture_notes))]
+        
         collection.add(
             documents=lecture_notes,
             embeddings=embeddings.tolist(),
-            ids=ids
+            ids=ids,
+            metadatas=metadatas
         )
         print(f"Stored {len(lecture_notes)} chunks in Chroma DB")
+    else:
+        print("Using cached embeddings from Chroma DB")
     
     return model
 
@@ -255,7 +287,7 @@ def main():
     print(f"Tech: {', '.join(technologies)}")
     
     print("Building embeddings and storing in Chroma...")
-    model = build_embeddings_and_store(lecture_notes)
+    model = build_embeddings_and_store(lecture_notes, file_type, file_name)
     print("Ready!")
     print()
     
